@@ -67,15 +67,6 @@
     flex-shrink: 0;
   }
 
-  #status {
-    position: fixed;
-    top: 40px;
-    right: 12px;
-    color: #888;
-    font: 12px monospace;
-    pointer-events: none;
-    z-index: 1;
-  }
   #tooltip {
     display: none;
     position: fixed;
@@ -108,7 +99,6 @@
     <button class="chain-btn" data-chain="ethereum"><span class="dot" id="dot-ethereum"></span>Ethereum</button>
   </div>
 </div>
-<div id="status"></div>
 <canvas id="canvas"></canvas>
 <div id="tooltip"></div>
 <script>
@@ -172,7 +162,6 @@ const FOUR_BYTE_END = 51;
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const statusEl = document.getElementById("status");
 const tooltipEl = document.getElementById("tooltip");
 
 // --- State ---
@@ -395,21 +384,42 @@ function tintColor(r, g, b, chainColor) {
   ];
 }
 
-function drawColumn(col, tx, blockNum, baseFeeWei) {
+function wouldBlockOverflow(txCount) {
   const logicalWidth = canvas.clientWidth;
   const logicalHeight = canvas.clientHeight;
+  let simX = cursorX;
+  let simY = cursorY;
+
+  for (let i = 0; i < txCount; i++) {
+    if (simX + COL_WIDTH > logicalWidth) {
+      simX = 0;
+      simY += ROW_SPACING;
+    }
+    if (simY + COL_HEIGHT > logicalHeight) {
+      return true;
+    }
+    simX += COL_WIDTH;
+  }
+
+  return false;
+}
+
+function resetPage() {
+  const logicalWidth = canvas.clientWidth;
+  const logicalHeight = canvas.clientHeight;
+  ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+  cursorX = 0;
+  cursorY = 0;
+  clearStoredData();
+}
+
+function drawColumn(col, tx, blockNum, baseFeeWei) {
+  const logicalWidth = canvas.clientWidth;
   const chainColor = getActiveChain().color;
 
   if (cursorX + COL_WIDTH > logicalWidth) {
     cursorX = 0;
     cursorY += ROW_SPACING;
-  }
-
-  if (cursorY + COL_HEIGHT > logicalHeight) {
-    ctx.clearRect(0, 0, logicalWidth, logicalHeight);
-    cursorX = 0;
-    cursorY = 0;
-    clearStoredData();
   }
 
   txHitmap.push({ x: cursorX, y: cursorY, tx, blockNum });
@@ -514,7 +524,6 @@ async function processBlock(blockNum) {
   if (!block) return false;
 
   const txCount = block.transactions ? block.transactions.length : 0;
-  statusEl.textContent = `Block #${blockNum} | ${txCount} txns`;
 
   blockData[blockNum] = {
     number: blockNum,
@@ -526,7 +535,10 @@ async function processBlock(blockNum) {
 
   const baseFeeWei = block.baseFeePerGas ? parseInt(block.baseFeePerGas, 16) : 0;
 
-  if (block.transactions) {
+  if (block.transactions && block.transactions.length > 0) {
+    if (wouldBlockOverflow(block.transactions.length)) {
+      resetPage();
+    }
     for (const tx of block.transactions) {
       const col = buildColumn(tx, baseFeeWei);
       drawColumn(col, tx, blockNum, baseFeeWei);
@@ -542,9 +554,7 @@ async function processBlock(blockNum) {
 }
 
 async function start() {
-  statusEl.textContent = "Connecting...";
   nextBlockNum = await getLatestBlockNumber();
-  statusEl.textContent = `Starting at block #${nextBlockNum}`;
   poll();
 }
 
