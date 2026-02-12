@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>whatisblockchaindoing.com</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; }
+  canvas { display: block; }
+
+  #header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    background: #111;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    z-index: 5;
+    border-bottom: 1px solid #222;
+  }
+
+  #header .site-name {
+    color: #888;
+    font: 12px monospace;
+    user-select: none;
+  }
+
+  #header .chain-buttons {
+    display: flex;
+    gap: 4px;
+  }
+
+  #header .chain-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #666;
+    font: 12px monospace;
+    padding: 4px 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  #header .chain-btn:hover {
+    color: #aaa;
+  }
+
+  #header .chain-btn.active {
+    color: #ccc;
+    border-bottom-color: #ccc;
+  }
+
+  #header .chain-btn .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 1px;
+    background: #333;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+
+  #status {
+    position: fixed;
+    top: 40px;
+    right: 12px;
+    color: #888;
+    font: 12px monospace;
+    pointer-events: none;
+    z-index: 1;
+  }
+  #tooltip {
+    display: none;
+    position: fixed;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: #ccc;
+    font: 11px monospace;
+    padding: 8px 10px;
+    z-index: 10;
+    pointer-events: none;
+    max-width: 520px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  #tooltip .label { color: #888; }
+  #tooltip .hash { color: #6cf; }
+  #tooltip a {
+    color: #6cf;
+    text-decoration: underline;
+    pointer-events: auto;
+  }
+</style>
+</head>
+<body>
+<div id="header">
+  <span class="site-name">whatisblockchaindoing.com</span>
+  <div class="chain-buttons">
+    <button class="chain-btn active" data-chain="monad"><span class="dot" id="dot-monad"></span>Monad</button>
+    <button class="chain-btn" data-chain="base"><span class="dot" id="dot-base"></span>Base</button>
+    <button class="chain-btn" data-chain="ethereum"><span class="dot" id="dot-ethereum"></span>Ethereum</button>
+  </div>
+</div>
+<div id="status"></div>
+<canvas id="canvas"></canvas>
+<div id="tooltip"></div>
+<script>
+
+// --- Chain configuration ---
+
+const CHAINS = {
+  monad: {
+    name: "Monad",
+    rpcUrl: "https://rpc-mainnet.monadinfra.com",
+    explorerUrl: "https://monadscan.com/tx/",
+    explorerName: "Monadscan",
+    currency: "MON",
+    blockTime: 400,
+    pollInterval: 200,
+    color: [255, 255, 255],
+    tipMin: 0.1,       // gwei — typical floor ~2 gwei
+    tipMax: 10000,     // gwei — generous log headroom
+    lowTip: 20,        // gwei — threshold for "low priority" tint
+  },
+  base: {
+    name: "Base",
+    rpcUrl: "https://base-rpc.publicnode.com",
+    explorerUrl: "https://basescan.org/tx/",
+    explorerName: "Basescan",
+    currency: "ETH",
+    blockTime: 2000,
+    pollInterval: 1000,
+    color: [0, 82, 255],
+    tipMin: 0.0001,    // gwei — many Base txs tip sub-0.001 gwei
+    tipMax: 100,       // gwei — generous log headroom for L2
+    lowTip: 0.005,     // gwei — median tip is ~0.001 gwei
+  },
+  ethereum: {
+    name: "Ethereum",
+    rpcUrl: "https://ethereum-rpc.publicnode.com",
+    explorerUrl: "https://etherscan.io/tx/",
+    explorerName: "Etherscan",
+    currency: "ETH",
+    blockTime: 12000,
+    pollInterval: 6000,
+    color: [98, 126, 234],
+    tipMin: 0.01,      // gwei — MEV bundles can tip very low
+    tipMax: 1000,      // gwei — covers extreme congestion spikes
+    lowTip: 1,         // gwei — typical tip is 0.1-2 gwei
+  },
+};
+
+// --- Constants ---
+
+const HEADER_HEIGHT = 33; // 32px + 1px border
+const COL_WIDTH = 2;
+const COL_HEIGHT = 134;
+const ROW_SPACING = 144;
+const BOUNDARY_ROWS = [20, 21, 42, 43, 52, 53, 68, 69, 90, 91, 112, 113];
+const BLOCK_GAP = 10;
+const FOUR_BYTE_START = 44;
+const FOUR_BYTE_END = 51;
+
+// --- DOM refs ---
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const tooltipEl = document.getElementById("tooltip");
+
+// --- State ---
+
+let activeChainKey = "monad";
+let cursorX = 0;
+let cursorY = 0;
+let nextBlockNum = null;
+let txHitmap = [];
+let blockData = {};
+let pollTimeoutId = null;
+let tooltipLocked = false;
+let lastHit = null;
+
+// Indicator dot intervals for non-selected chains
+const dotIntervals = {};
+// Track dot flash timeouts
+const dotFlashTimeouts = {};
+
+function getActiveChain() {
+  return CHAINS[activeChainKey];
+}
+
+// --- Clear / reset ---
+
+function clearStoredData() {
+  txHitmap = [];
+  blockData = {};
+  hideTooltip();
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = window.innerWidth;
+  const h = window.innerHeight - HEADER_HEIGHT;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+  canvas.style.marginTop = HEADER_HEIGHT + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cursorX = 0;
+  cursorY = 0;
+  clearStoredData();
+}
+window.addEventListener("resize", resize);
+resize();
+
+// --- RPC ---
+
+async function rpcCall(method, params) {
+  const chain = getActiveChain();
+  const res = await fetch(chain.rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message);
+  return json.result;
+}
+
+async function getBlockByNumber(blockNum) {
+  const hex = "0x" + blockNum.toString(16);
+  return rpcCall("eth_getBlockByNumber", [hex, true]);
+}
+
+async function getLatestBlockNumber() {
+  const block = await rpcCall("eth_blockNumber", []);
+  return parseInt(block, 16);
+}
+
+// --- Byte extraction helpers ---
+
+function hexToBytes(hex) {
+  if (!hex || hex === "0x") return new Uint8Array(0);
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+function addressToBytes(addr) {
+  return hexToBytes(addr);
+}
+
+// --- Column pixel generation ---
+
+function inputLenExpScale(inputLen, pxCount) {
+  const MIN_LEN = 36;
+  const MAX_LEN = 100000;
+  const arr = new Uint8Array(pxCount);
+  if (inputLen < MIN_LEN) return arr;
+  const ratio = Math.min(1, Math.log2(inputLen / MIN_LEN) / Math.log2(MAX_LEN / MIN_LEN));
+  if (ratio <= 0.5) {
+    const halfRatio = ratio / 0.5;
+    const filled = 1 + Math.round(halfRatio * (pxCount - 1));
+    for (let i = pxCount - filled; i < pxCount; i++) arr[i] = 128;
+  } else {
+    for (let i = 0; i < pxCount; i++) arr[i] = 128;
+    const halfRatio = (ratio - 0.5) / 0.5;
+    const filled = 1 + Math.round(halfRatio * (pxCount - 1));
+    for (let i = pxCount - filled; i < pxCount; i++) arr[i] = 255;
+  }
+  return arr;
+}
+
+function gasExpScale(gasUsed, pxCount) {
+  const MIN_GAS = 20000;
+  const MAX_GAS = 30000000;
+  const arr = new Uint8Array(pxCount);
+  if (gasUsed < MIN_GAS) return arr;
+  const ratio = Math.min(1, Math.log2(gasUsed / MIN_GAS) / Math.log2(MAX_GAS / MIN_GAS));
+  if (ratio <= 0.5) {
+    const halfRatio = ratio / 0.5;
+    const filled = 1 + Math.round(halfRatio * (pxCount - 1));
+    for (let i = pxCount - filled; i < pxCount; i++) arr[i] = 128;
+  } else {
+    for (let i = 0; i < pxCount; i++) arr[i] = 128;
+    const halfRatio = (ratio - 0.5) / 0.5;
+    const filled = 1 + Math.round(halfRatio * (pxCount - 1));
+    for (let i = pxCount - filled; i < pxCount; i++) arr[i] = 255;
+  }
+  return arr;
+}
+
+function priorityFeeExpScale(feeGwei, pxCount, minFee, maxFee) {
+  const arr = new Uint8Array(pxCount);
+  if (feeGwei < minFee) return arr;
+  const ratio = Math.min(1, Math.log2(feeGwei / minFee) / Math.log2(maxFee / minFee));
+  if (ratio <= 0.5) {
+    const halfRatio = ratio / 0.5;
+    const filled = 1 + Math.round(halfRatio * (pxCount - 1));
+    for (let i = pxCount - filled; i < pxCount; i++) arr[i] = 128;
+  } else {
+    for (let i = 0; i < pxCount; i++) arr[i] = 128;
+    const halfRatio = (ratio - 0.5) / 0.5;
+    const filled = 1 + Math.round(halfRatio * (pxCount - 1));
+    for (let i = pxCount - filled; i < pxCount; i++) arr[i] = 255;
+  }
+  return arr;
+}
+
+function buildColumn(tx, baseFeeWei) {
+  const col = new Uint8Array(COL_HEIGHT);
+
+  // 20px sender address (rows 0-19)
+  const from = addressToBytes(tx.from);
+  col.set(from.slice(0, 20), 0);
+
+  // 20px receiver address (rows 22-41)
+  if (tx.to) {
+    const to = addressToBytes(tx.to);
+    col.set(to.slice(0, 20), 22);
+  }
+
+  // Input data
+  const input = hexToBytes(tx.input);
+  const inputLen = input.length;
+
+  // 8px first four bytes of input data (rows 44-51)
+  if (inputLen > 0) {
+    const count = Math.min(4, inputLen);
+    for (let i = 0; i < count; i++) {
+      col[44 + i * 2] = input[i];
+      col[44 + i * 2 + 1] = input[i];
+    }
+  }
+
+  // 14px last bytes of input data (rows 54-67)
+  if (inputLen > 4) {
+    const tailStart = Math.max(4, inputLen - 14);
+    const tail = input.slice(tailStart, inputLen);
+    const offset = 54 + (14 - tail.length);
+    col.set(tail, offset);
+  }
+
+  // 20px input data length (rows 70-89)
+  const inputLenScale = inputLenExpScale(inputLen, 20);
+  col.set(inputLenScale, 70);
+
+  // 20px gas usage (rows 92-111)
+  const gasUsed = parseInt(tx.gas, 16);
+  const gasScale = gasExpScale(gasUsed, 20);
+  gasScale.reverse();
+  col.set(gasScale, 92);
+
+  // 20px priority fee (rows 114-133)
+  const gasPriceWei = tx.gasPrice ? parseInt(tx.gasPrice, 16) : 0;
+  const effectivePriorityFee = Math.max(0, gasPriceWei - baseFeeWei);
+  const priorityFeeGwei = effectivePriorityFee / 1e9;
+  const chain = getActiveChain();
+  const pfScale = priorityFeeExpScale(priorityFeeGwei, 20, chain.tipMin, chain.tipMax);
+  pfScale.reverse();
+  col.set(pfScale, 114);
+
+  return col;
+}
+
+function fourByteColor(v) {
+  if (v < 85) {
+    return [0, 0, Math.round((v / 84) * 255)];
+  } else if (v < 170) {
+    return [Math.round(((v - 85) / 84) * 255), 0, 255];
+  } else {
+    return [255, Math.round(((v - 170) / 85) * 255), 255];
+  }
+}
+
+// --- Rendering ---
+
+function tintColor(r, g, b, chainColor) {
+  const [cr, cg, cb] = chainColor;
+  return [
+    Math.round(r * cr / 255),
+    Math.round(g * cg / 255),
+    Math.round(b * cb / 255),
+  ];
+}
+
+function drawColumn(col, tx, blockNum, baseFeeWei) {
+  const logicalWidth = canvas.clientWidth;
+  const logicalHeight = canvas.clientHeight;
+  const chainColor = getActiveChain().color;
+
+  if (cursorX + COL_WIDTH > logicalWidth) {
+    cursorX = 0;
+    cursorY += ROW_SPACING;
+  }
+
+  if (cursorY + COL_HEIGHT > logicalHeight) {
+    ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+    cursorX = 0;
+    cursorY = 0;
+    clearStoredData();
+  }
+
+  txHitmap.push({ x: cursorX, y: cursorY, tx, blockNum });
+
+  const gasPriceWei = tx.gasPrice ? parseInt(tx.gasPrice, 16) : 0;
+  const effectivePriority = gasPriceWei - baseFeeWei;
+  const lowPriorityFee = effectivePriority < getActiveChain().lowTip * 1e9;
+
+  const dpr = window.devicePixelRatio || 1;
+  const pxW = Math.round(COL_WIDTH * dpr);
+  const pxH = Math.round(COL_HEIGHT * dpr);
+  const imgData = ctx.createImageData(pxW, pxH);
+  const data = imgData.data;
+
+  for (let y = 0; y < COL_HEIGHT; y++) {
+    const isBoundary = BOUNDARY_ROWS.includes(y);
+    const yStart = Math.round(y * dpr);
+    const yEnd = Math.round((y + 1) * dpr);
+    for (let row = yStart; row < yEnd; row++) {
+      for (let x = 0; x < pxW; x++) {
+        const i = (row * pxW + x) * 4;
+        if (isBoundary) {
+          data[i] = 0;
+          data[i + 1] = 0;
+          data[i + 2] = 0;
+        } else if (y >= FOUR_BYTE_START && y <= FOUR_BYTE_END) {
+          const [r, g, b] = fourByteColor(col[y]);
+          const [tr, tg, tb] = tintColor(r, g, b, chainColor);
+          data[i] = tr;
+          data[i + 1] = tg;
+          data[i + 2] = tb;
+        } else if (y >= 92 && lowPriorityFee) {
+          const v = col[y];
+          const r = Math.round(v * 110 / 255);
+          const g = Math.round(v * 84 / 255);
+          const b = v;
+          const [tr, tg, tb] = tintColor(r, g, b, chainColor);
+          data[i] = tr;
+          data[i + 1] = tg;
+          data[i + 2] = tb;
+        } else {
+          const v = col[y];
+          const [tr, tg, tb] = tintColor(v, v, v, chainColor);
+          data[i] = tr;
+          data[i + 1] = tg;
+          data[i + 2] = tb;
+        }
+        data[i + 3] = 255;
+      }
+    }
+  }
+
+  ctx.putImageData(imgData, Math.round(cursorX * dpr), Math.round(cursorY * dpr));
+  cursorX += COL_WIDTH;
+}
+
+function addBlockGap() {
+  cursorX += BLOCK_GAP;
+}
+
+// --- Indicator dots ---
+
+function flashDot(chainKey) {
+  const dot = document.getElementById("dot-" + chainKey);
+  if (!dot) return;
+  const chain = CHAINS[chainKey];
+  const [r, g, b] = chain.color;
+  dot.style.background = `rgb(${r},${g},${b})`;
+  clearTimeout(dotFlashTimeouts[chainKey]);
+  dotFlashTimeouts[chainKey] = setTimeout(() => {
+    dot.style.background = "#333";
+  }, 200);
+}
+
+function startDotInterval(chainKey) {
+  stopDotInterval(chainKey);
+  const chain = CHAINS[chainKey];
+  dotIntervals[chainKey] = setInterval(() => {
+    flashDot(chainKey);
+  }, chain.blockTime);
+}
+
+function stopDotInterval(chainKey) {
+  if (dotIntervals[chainKey]) {
+    clearInterval(dotIntervals[chainKey]);
+    delete dotIntervals[chainKey];
+  }
+}
+
+function initDotIntervals() {
+  for (const key of Object.keys(CHAINS)) {
+    if (key !== activeChainKey) {
+      startDotInterval(key);
+    }
+  }
+}
+
+// --- Main loop ---
+
+async function processBlock(blockNum) {
+  const block = await getBlockByNumber(blockNum);
+  if (!block) return false;
+
+  const txCount = block.transactions ? block.transactions.length : 0;
+  statusEl.textContent = `Block #${blockNum} | ${txCount} txns`;
+
+  blockData[blockNum] = {
+    number: blockNum,
+    hash: block.hash,
+    timestamp: parseInt(block.timestamp, 16),
+    baseFeePerGas: block.baseFeePerGas || null,
+    txCount,
+  };
+
+  const baseFeeWei = block.baseFeePerGas ? parseInt(block.baseFeePerGas, 16) : 0;
+
+  if (block.transactions) {
+    for (const tx of block.transactions) {
+      const col = buildColumn(tx, baseFeeWei);
+      drawColumn(col, tx, blockNum, baseFeeWei);
+    }
+  }
+
+  addBlockGap();
+
+  // Flash the selected chain's dot on real block arrival
+  flashDot(activeChainKey);
+
+  return true;
+}
+
+async function start() {
+  statusEl.textContent = "Connecting...";
+  nextBlockNum = await getLatestBlockNumber();
+  statusEl.textContent = `Starting at block #${nextBlockNum}`;
+  poll();
+}
+
+async function poll() {
+  try {
+    const chainKeyAtStart = activeChainKey;
+    const success = await processBlock(nextBlockNum);
+    // If user switched chains while we were fetching, bail out
+    if (activeChainKey !== chainKeyAtStart) return;
+    if (success) {
+      nextBlockNum++;
+    }
+    pollTimeoutId = setTimeout(poll, getActiveChain().pollInterval);
+  } catch (e) {
+    if (activeChainKey) {
+      pollTimeoutId = setTimeout(poll, getActiveChain().pollInterval);
+    }
+  }
+}
+
+function stopPolling() {
+  if (pollTimeoutId) {
+    clearTimeout(pollTimeoutId);
+    pollTimeoutId = null;
+  }
+}
+
+// --- Chain switching ---
+
+function switchChain(newChainKey) {
+  if (newChainKey === activeChainKey) return;
+
+  const prevChainKey = activeChainKey;
+
+  // Stop current polling
+  stopPolling();
+
+  // Clear canvas and state
+  const logicalWidth = canvas.clientWidth;
+  const logicalHeight = canvas.clientHeight;
+  ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+  cursorX = 0;
+  cursorY = 0;
+  clearStoredData();
+  nextBlockNum = null;
+
+  // Update active chain
+  activeChainKey = newChainKey;
+
+  // Update button styles
+  document.querySelectorAll(".chain-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.chain === newChainKey);
+  });
+
+  // Dot intervals: start interval for previously-selected, stop for newly-selected
+  startDotInterval(prevChainKey);
+  stopDotInterval(newChainKey);
+
+  // Start fetching new chain
+  start();
+}
+
+// --- Tooltip / hover ---
+
+function findTxAt(mx, my) {
+  for (let i = txHitmap.length - 1; i >= 0; i--) {
+    const h = txHitmap[i];
+    // Adjust my for header offset: mouse coords are page-relative,
+    // but hit positions are canvas-relative
+    const canvasY = my - HEADER_HEIGHT;
+    if (mx >= h.x && mx < h.x + COL_WIDTH && canvasY >= h.y && canvasY < h.y + COL_HEIGHT) {
+      return h;
+    }
+  }
+  return null;
+}
+
+function formatEth(hexWei) {
+  const wei = BigInt(hexWei);
+  const eth = Number(wei) / 1e18;
+  if (eth === 0) return "0";
+  if (eth < 0.0001) return eth.toExponential(2);
+  return eth.toFixed(6);
+}
+
+function formatGwei(hexWei) {
+  if (!hexWei) return null;
+  const wei = BigInt(hexWei);
+  const gwei = Number(wei) / 1e9;
+  if (gwei === 0) return "0";
+  if (gwei < 0.001) return gwei.toExponential(2);
+  if (gwei >= 1000) return gwei.toFixed(0);
+  return gwei.toFixed(3);
+}
+
+function hideTooltip() {
+  tooltipEl.style.display = "none";
+  tooltipEl.onmouseleave = null;
+}
+
+function showTooltip(hit, mouseX, mouseY) {
+  const chain = getActiveChain();
+  const tx = hit.tx;
+  const blk = blockData[hit.blockNum];
+  const inputLen = tx.input && tx.input !== "0x" ? (tx.input.length - 2) / 2 : 0;
+  const gas = parseInt(tx.gas, 16);
+  const scanUrl = chain.explorerUrl + tx.hash;
+
+  function label(text) {
+    const s = document.createElement("span");
+    s.className = "label";
+    s.textContent = text;
+    return s;
+  }
+
+  function link(href, text) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = text;
+    return a;
+  }
+
+  function line(...nodes) {
+    const div = document.createElement("div");
+    for (const n of nodes) {
+      if (typeof n === "string") div.appendChild(document.createTextNode(n));
+      else div.appendChild(n);
+    }
+    return div;
+  }
+
+  const hasEip1559 = (blk && blk.baseFeePerGas) || tx.maxFeePerGas || tx.maxPriorityFeePerGas;
+
+  tooltipEl.replaceChildren(
+    line(label("tx: "), link(scanUrl, tx.hash)),
+    line(label("block: "), document.createTextNode(String(hit.blockNum)),
+      ...(blk ? [label(" time: "), document.createTextNode(new Date(blk.timestamp * 1000).toISOString().replace("T", " ").slice(0, 19))] : [])),
+    line(label("from: "), document.createTextNode(tx.from)),
+    line(label("to: "), document.createTextNode(tx.to || "(contract creation)")),
+    line(label("value: "), document.createTextNode(formatEth(tx.value) + " " + chain.currency)),
+    line(label("gas: "), document.createTextNode(gas.toLocaleString()),
+      ...(tx.gasPrice ? [label("  price: "), document.createTextNode(formatGwei(tx.gasPrice) + " gwei")] : [])),
+    ...(hasEip1559 ? [line(
+      ...(blk && blk.baseFeePerGas ? [label("baseFee: "), document.createTextNode(formatGwei(blk.baseFeePerGas) + " gwei  ")] : []),
+      ...(tx.maxFeePerGas ? [label("maxFee: "), document.createTextNode(formatGwei(tx.maxFeePerGas) + " gwei  ")] : []),
+      ...(tx.maxPriorityFeePerGas ? [label("tip: "), document.createTextNode(formatGwei(tx.maxPriorityFeePerGas) + " gwei")] : []))] : []),
+    line(
+      ...(inputLen > 0 ? [label("selector: "), document.createTextNode(tx.input.slice(0, 10) + " ")] : []),
+      label("input: "), document.createTextNode(inputLen + " bytes")),
+    line(link(scanUrl, "View on " + chain.explorerName)),
+  );
+  tooltipEl.style.display = "block";
+
+  const pageH = window.innerHeight;
+  const txScreenY = hit.y + HEADER_HEIGHT;
+  const txMidY = txScreenY + COL_HEIGHT / 2;
+  const inTopHalf = txMidY < pageH / 2;
+
+  let left = mouseX + 8;
+  tooltipEl.style.left = left + "px";
+  tooltipEl.style.top = "0px";
+  const rect = tooltipEl.getBoundingClientRect();
+  if (left + rect.width > window.innerWidth - 8) {
+    left = window.innerWidth - rect.width - 8;
+  }
+  tooltipEl.style.left = left + "px";
+
+  if (inTopHalf) {
+    tooltipEl.style.top = (txScreenY + COL_HEIGHT + 4) + "px";
+  } else {
+    tooltipEl.style.top = (txScreenY - rect.height - 4) + "px";
+  }
+
+  tooltipEl.onmouseleave = () => {
+    if (tooltipLocked) {
+      tooltipLocked = false;
+      hideTooltip();
+    }
+  };
+}
+
+canvas.addEventListener("mousemove", (e) => {
+  if (tooltipLocked) return;
+  const mx = e.clientX;
+  const my = e.clientY;
+  const hit = findTxAt(mx, my);
+  if (hit) {
+    if (lastHit && lastHit.tx.hash === hit.tx.hash) return;
+    lastHit = hit;
+    showTooltip(hit, mx, my);
+  } else {
+    if (lastHit) {
+      lastHit = null;
+      hideTooltip();
+    }
+  }
+});
+
+canvas.addEventListener("click", (e) => {
+  const mx = e.clientX;
+  const my = e.clientY;
+  const hit = findTxAt(mx, my);
+  if (hit) {
+    tooltipLocked = true;
+    showTooltip(hit, mx, my);
+  } else {
+    tooltipLocked = false;
+    hideTooltip();
+  }
+});
+
+document.addEventListener("mousedown", (e) => {
+  if (tooltipLocked && !tooltipEl.contains(e.target) && e.target !== canvas) {
+    tooltipLocked = false;
+    hideTooltip();
+  }
+});
+
+// --- Button click handlers ---
+
+document.querySelectorAll(".chain-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    switchChain(btn.dataset.chain);
+  });
+});
+
+// --- Init ---
+
+initDotIntervals();
+start();
+
+</script>
+</body>
+</html>
