@@ -70,23 +70,96 @@
   #tooltip {
     display: none;
     position: fixed;
-    background: #1a1a1a;
-    border: 1px solid #444;
+    background: #0d0d0d;
+    border: 1px solid #2a2a2a;
     color: #ccc;
-    font: 11px monospace;
-    padding: 8px 10px;
+    font-family: monospace;
     z-index: 10;
     pointer-events: none;
-    max-width: 520px;
-    line-height: 1.5;
-    white-space: nowrap;
+    max-width: 90vw;
   }
-  #tooltip .label { color: #888; }
-  #tooltip .hash { color: #6cf; }
   #tooltip a {
     color: #6cf;
-    text-decoration: underline;
+    text-decoration: none;
     pointer-events: auto;
+  }
+  #tooltip a:hover { text-decoration: underline; }
+  .tt-upper {
+    display: flex;
+    align-items: stretch;
+    padding: 14px 16px;
+    gap: 14px;
+  }
+  .tt-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    min-width: 70px;
+  }
+  .tt-bar {
+    flex-shrink: 0;
+    border-radius: 1px;
+    image-rendering: pixelated;
+  }
+  .tt-item { text-align: center; }
+  .tt-value {
+    font-size: 13px;
+    color: #ddd;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+  .tt-label {
+    font-size: 8px;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    line-height: 1;
+    margin-top: 1px;
+  }
+  .tt-spacer { flex: 1; }
+  .tt-bottom {
+    border-top: 1px solid #1a1a1a;
+    padding: 8px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .tt-addr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tt-addr-pattern {
+    flex-shrink: 0;
+    image-rendering: pixelated;
+  }
+  .tt-addr {
+    font-size: 10px;
+    color: #666;
+    flex: 1;
+  }
+  .tt-addr-label {
+    font-size: 8px;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    width: 28px;
+    text-align: right;
+  }
+  .tt-hash-bar {
+    border-top: 1px solid #181818;
+    padding: 5px 16px 6px;
+    background: #0a0a0a;
+  }
+  .tt-hash-bar a {
+    font-size: 9px;
+    color: #444;
+    word-break: break-all;
+    display: block;
+    line-height: 1.3;
   }
 </style>
 </head>
@@ -422,7 +495,7 @@ function drawColumn(col, tx, blockNum, baseFeeWei) {
     cursorY += ROW_SPACING;
   }
 
-  txHitmap.push({ x: cursorX, y: cursorY, tx, blockNum });
+  txHitmap.push({ x: cursorX, y: cursorY, tx, blockNum, col: col.slice(), baseFeeWei });
 
   const gasPriceWei = tx.gasPrice ? parseInt(tx.gasPrice, 16) : 0;
   const effectivePriority = gasPriceWei - baseFeeWei;
@@ -653,8 +726,65 @@ function formatGwei(hexWei) {
   return gwei.toFixed(3);
 }
 
+function formatGweiNum(gwei) {
+  if (gwei === 0) return "0";
+  if (gwei < 0.001) return gwei.toExponential(2);
+  if (gwei >= 1000) return gwei.toFixed(0);
+  return gwei.toFixed(3);
+}
+
+function renderVerticalBar(sliceData, w, h, colorFn) {
+  const c = document.createElement('canvas');
+  c.className = 'tt-bar';
+  c.width = w;
+  c.height = h;
+  c.style.width = w + 'px';
+  c.style.height = h + 'px';
+  const cx = c.getContext('2d');
+  const rowH = h / sliceData.length;
+  for (let i = 0; i < sliceData.length; i++) {
+    const [r, g, b] = colorFn(sliceData[i]);
+    cx.fillStyle = `rgb(${r},${g},${b})`;
+    cx.fillRect(0, Math.round(i * rowH), w, Math.ceil(rowH));
+  }
+  return c;
+}
+
+function renderAddressPattern(addrSlice, w, h, chainColor) {
+  const c = document.createElement('canvas');
+  c.className = 'tt-addr-pattern';
+  c.width = w;
+  c.height = h;
+  c.style.width = w + 'px';
+  c.style.height = h + 'px';
+  const cx = c.getContext('2d');
+  const colW = w / addrSlice.length;
+  for (let i = 0; i < addrSlice.length; i++) {
+    const v = addrSlice[i];
+    const [r, g, b] = tintColor(v, v, v, chainColor);
+    cx.fillStyle = `rgb(${r},${g},${b})`;
+    cx.fillRect(Math.round(i * colW), 0, Math.ceil(colW), h);
+  }
+  return c;
+}
+
+function ttItem(value, unit, label) {
+  const item = document.createElement('div');
+  item.className = 'tt-item';
+  const valEl = document.createElement('div');
+  valEl.className = 'tt-value';
+  valEl.textContent = unit ? value + ' ' + unit : value;
+  item.appendChild(valEl);
+  const lblEl = document.createElement('div');
+  lblEl.className = 'tt-label';
+  lblEl.textContent = label;
+  item.appendChild(lblEl);
+  return item;
+}
+
 function hideTooltip() {
   tooltipEl.style.display = "none";
+  tooltipEl.style.pointerEvents = "none";
   tooltipEl.onmouseleave = null;
 }
 
@@ -662,80 +792,171 @@ function showTooltip(hit, mouseX, mouseY) {
   const chain = getActiveChain();
   const tx = hit.tx;
   const blk = blockData[hit.blockNum];
+  const col = hit.col;
+  const baseFeeWei = hit.baseFeeWei;
+  const chainColor = chain.color;
   const inputLen = tx.input && tx.input !== "0x" ? (tx.input.length - 2) / 2 : 0;
-  const gas = parseInt(tx.gas, 16);
   const scanUrl = chain.explorerUrl + tx.hash;
 
-  function label(text) {
-    const s = document.createElement("span");
-    s.className = "label";
-    s.textContent = text;
-    return s;
-  }
+  const gasPriceWei = tx.gasPrice ? parseInt(tx.gasPrice, 16) : 0;
+  const effectivePriorityFee = Math.max(0, gasPriceWei - baseFeeWei);
+  const lowPriorityFee = effectivePriorityFee < chain.lowTip * 1e9;
 
-  function link(href, text) {
-    const a = document.createElement("a");
-    a.href = href;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.textContent = text;
-    return a;
-  }
-
-  function line(...nodes) {
-    const div = document.createElement("div");
-    for (const n of nodes) {
-      if (typeof n === "string") div.appendChild(document.createTextNode(n));
-      else div.appendChild(n);
+  function gasColorFn(v) {
+    if (lowPriorityFee && v > 0) {
+      const r = Math.round(v * 110 / 255);
+      const g = Math.round(v * 84 / 255);
+      return tintColor(r, g, v, chainColor);
     }
-    return div;
+    return tintColor(v, v, v, chainColor);
+  }
+  function normalColorFn(v) {
+    return tintColor(v, v, v, chainColor);
   }
 
-  const hasEip1559 = (blk && blk.baseFeePerGas) || tx.maxFeePerGas || tx.maxPriorityFeePerGas;
+  const pfSlice = col.slice(114, 134);
+  const gasSlice = col.slice(92, 112);
+  const lenSlice = col.slice(70, 90);
+  const fromSlice = col.slice(0, 20);
+  const toSlice = col.slice(22, 42);
 
-  tooltipEl.replaceChildren(
-    line(label("tx: "), link(scanUrl, tx.hash)),
-    line(label("block: "), document.createTextNode(String(hit.blockNum)),
-      ...(blk ? [label(" time: "), document.createTextNode(new Date(blk.timestamp * 1000).toISOString().replace("T", " ").slice(0, 19))] : [])),
-    line(label("from: "), document.createTextNode(tx.from)),
-    line(label("to: "), document.createTextNode(tx.to || "(contract creation)")),
-    line(label("value: "), document.createTextNode(formatEth(tx.value) + " " + chain.currency)),
-    line(label("gas: "), document.createTextNode(gas.toLocaleString()),
-      ...(tx.gasPrice ? [label("  price: "), document.createTextNode(formatGwei(tx.gasPrice) + " gwei")] : [])),
-    ...(hasEip1559 ? [line(
-      ...(blk && blk.baseFeePerGas ? [label("baseFee: "), document.createTextNode(formatGwei(blk.baseFeePerGas) + " gwei  ")] : []),
-      ...(tx.maxFeePerGas ? [label("maxFee: "), document.createTextNode(formatGwei(tx.maxFeePerGas) + " gwei  ")] : []),
-      ...(tx.maxPriorityFeePerGas ? [label("tip: "), document.createTextNode(formatGwei(tx.maxPriorityFeePerGas) + " gwei")] : []))] : []),
-    line(
-      ...(inputLen > 0 ? [label("selector: "), document.createTextNode(tx.input.slice(0, 10) + " ")] : []),
-      label("input: "), document.createTextNode(inputLen + " bytes")),
-    line(link(scanUrl, "View on " + chain.explorerName)),
-  );
-  tooltipEl.style.display = "block";
+  const BAR_W = 10;
+  const BAR_H = 140;
 
+  tooltipEl.replaceChildren();
+
+  // --- Upper section ---
+  const upper = document.createElement('div');
+  upper.className = 'tt-upper';
+
+  // Section 1: Fee numbers
+  const feeSection = document.createElement('div');
+  feeSection.className = 'tt-section';
+  if (tx.gasPrice) {
+    feeSection.appendChild(ttItem(formatGwei(tx.gasPrice), 'gwei', 'total gas'));
+  }
+  if (tx.maxPriorityFeePerGas) {
+    feeSection.appendChild(ttItem(formatGwei(tx.maxPriorityFeePerGas), 'gwei', 'tip'));
+  } else if (gasPriceWei && baseFeeWei) {
+    feeSection.appendChild(ttItem(formatGweiNum(effectivePriorityFee / 1e9), 'gwei', 'tip'));
+  }
+  if (blk && blk.baseFeePerGas) {
+    feeSection.appendChild(ttItem(formatGwei(blk.baseFeePerGas), 'gwei', 'base fee'));
+  }
+  if (tx.maxFeePerGas) {
+    feeSection.appendChild(ttItem(formatGwei(tx.maxFeePerGas), 'gwei', 'max fee'));
+  }
+  upper.appendChild(feeSection);
+
+  // Priority fee bar
+  upper.appendChild(renderVerticalBar(pfSlice, BAR_W, BAR_H, gasColorFn));
+
+  // Gas bar
+  upper.appendChild(renderVerticalBar(gasSlice, BAR_W, BAR_H, gasColorFn));
+
+  // Section 3: Data (selector, bytes, value at bottom)
+  const dataSection = document.createElement('div');
+  dataSection.className = 'tt-section';
+  if (inputLen >= 4) {
+    dataSection.appendChild(ttItem(tx.input.slice(0, 10), '', 'selector'));
+  }
+  dataSection.appendChild(ttItem(inputLen.toLocaleString(), 'bytes', 'input'));
+  const spacer = document.createElement('div');
+  spacer.className = 'tt-spacer';
+  dataSection.appendChild(spacer);
+  dataSection.appendChild(ttItem(formatEth(tx.value), chain.currency, 'value'));
+  upper.appendChild(dataSection);
+
+  // Input length bar
+  upper.appendChild(renderVerticalBar(lenSlice, BAR_W, BAR_H, normalColorFn));
+
+  // Section 4: Block info
+  const blockSection = document.createElement('div');
+  blockSection.className = 'tt-section';
+  blockSection.appendChild(ttItem(hit.blockNum.toLocaleString(), '', 'block'));
+  if (blk) {
+    const date = new Date(blk.timestamp * 1000);
+    blockSection.appendChild(ttItem(date.toTimeString().slice(0, 8), '', 'time'));
+    blockSection.appendChild(ttItem(
+      date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), '', 'date'));
+  }
+  upper.appendChild(blockSection);
+
+  tooltipEl.appendChild(upper);
+
+  // --- Bottom section ---
+  const bottom = document.createElement('div');
+  bottom.className = 'tt-bottom';
+
+  const fromRow = document.createElement('div');
+  fromRow.className = 'tt-addr-row';
+  fromRow.appendChild(renderAddressPattern(fromSlice, 40, 14, chainColor));
+  const fromAddr = document.createElement('span');
+  fromAddr.className = 'tt-addr';
+  fromAddr.textContent = tx.from;
+  fromRow.appendChild(fromAddr);
+  const fromLbl = document.createElement('span');
+  fromLbl.className = 'tt-addr-label';
+  fromLbl.textContent = 'from';
+  fromRow.appendChild(fromLbl);
+  bottom.appendChild(fromRow);
+
+  const toRow = document.createElement('div');
+  toRow.className = 'tt-addr-row';
+  toRow.appendChild(renderAddressPattern(toSlice, 40, 14, chainColor));
+  const toAddr = document.createElement('span');
+  toAddr.className = 'tt-addr';
+  toAddr.textContent = tx.to || '(contract creation)';
+  toRow.appendChild(toAddr);
+  const toLbl = document.createElement('span');
+  toLbl.className = 'tt-addr-label';
+  toLbl.textContent = 'to';
+  toRow.appendChild(toLbl);
+  bottom.appendChild(toRow);
+
+  tooltipEl.appendChild(bottom);
+
+  // Hash footer
+  const hashBar = document.createElement('div');
+  hashBar.className = 'tt-hash-bar';
+  const hashLink = document.createElement('a');
+  hashLink.href = scanUrl;
+  hashLink.target = '_blank';
+  hashLink.rel = 'noopener';
+  hashLink.textContent = tx.hash;
+  hashBar.appendChild(hashLink);
+  tooltipEl.appendChild(hashBar);
+
+  // --- Position ---
+  tooltipEl.style.display = 'block';
+  tooltipEl.style.left = '0px';
+  tooltipEl.style.top = '0px';
+  tooltipEl.style.pointerEvents = tooltipLocked ? 'auto' : 'none';
+
+  const rect = tooltipEl.getBoundingClientRect();
+  const pageW = window.innerWidth;
   const pageH = window.innerHeight;
+
+  let left = mouseX - rect.width / 2;
+  left = Math.max(8, Math.min(left, pageW - rect.width - 8));
+
   const txScreenY = hit.y + HEADER_HEIGHT;
   const txMidY = txScreenY + COL_HEIGHT / 2;
-  const inTopHalf = txMidY < pageH / 2;
-
-  let left = mouseX + 8;
-  tooltipEl.style.left = left + "px";
-  tooltipEl.style.top = "0px";
-  const rect = tooltipEl.getBoundingClientRect();
-  if (left + rect.width > window.innerWidth - 8) {
-    left = window.innerWidth - rect.width - 8;
-  }
-  tooltipEl.style.left = left + "px";
-
-  if (inTopHalf) {
-    tooltipEl.style.top = (txScreenY + COL_HEIGHT + 4) + "px";
+  let top;
+  if (txMidY < pageH / 2) {
+    top = txScreenY + COL_HEIGHT + 8;
   } else {
-    tooltipEl.style.top = (txScreenY - rect.height - 4) + "px";
+    top = txScreenY - rect.height - 8;
   }
+  top = Math.max(HEADER_HEIGHT + 4, Math.min(top, pageH - rect.height - 4));
+
+  tooltipEl.style.left = left + 'px';
+  tooltipEl.style.top = top + 'px';
 
   tooltipEl.onmouseleave = () => {
     if (tooltipLocked) {
       tooltipLocked = false;
+      tooltipEl.style.pointerEvents = 'none';
       hideTooltip();
     }
   };
