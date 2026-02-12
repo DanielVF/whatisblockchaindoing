@@ -604,6 +604,9 @@ function switchChain(newChainKey) {
   // Update active chain
   activeChainKey = newChainKey;
 
+  // Update URL hash
+  history.replaceState(null, "", "#" + newChainKey);
+
   // Update button styles
   document.querySelectorAll(".chain-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.chain === newChainKey);
@@ -783,7 +786,30 @@ document.querySelectorAll(".chain-btn").forEach(btn => {
   });
 });
 
+// --- Hash-based chain selection ---
+
+function getChainFromHash() {
+  const hash = location.hash.slice(1).toLowerCase();
+  return CHAINS[hash] ? hash : null;
+}
+
+window.addEventListener("hashchange", () => {
+  const chainKey = getChainFromHash();
+  if (chainKey) switchChain(chainKey);
+});
+
 // --- Init ---
+
+const initialChain = getChainFromHash();
+if (initialChain && initialChain !== activeChainKey) {
+  activeChainKey = initialChain;
+  document.querySelectorAll(".chain-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.chain === initialChain);
+  });
+}
+if (!location.hash) {
+  history.replaceState(null, "", "#" + activeChainKey);
+}
 
 initDotIntervals();
 start();
