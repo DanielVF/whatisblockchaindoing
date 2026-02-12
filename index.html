@@ -76,7 +76,7 @@
     font-family: monospace;
     z-index: 10;
     pointer-events: none;
-    width: 440px;
+    width: 395px;
     max-width: 90vw;
   }
   #tooltip a {
@@ -234,7 +234,7 @@ const CHAINS = {
 // --- Constants ---
 
 const HEADER_HEIGHT = 33; // 32px + 1px border
-const COL_WIDTH = 2;
+const COL_WIDTH = 4;
 const COL_HEIGHT = 134;
 const ROW_SPACING = 144;
 const BOUNDARY_ROWS = [20, 21, 42, 43, 52, 53, 68, 69, 90, 91, 112, 113];
@@ -724,6 +724,7 @@ function formatEth(hexWei) {
   const eth = Number(wei) / 1e18;
   if (eth === 0) return "0";
   if (eth < 0.0001) return eth.toExponential(2);
+  if (eth >= 1000) return Math.round(eth).toLocaleString();
   return eth.toFixed(6);
 }
 
@@ -825,8 +826,8 @@ function showTooltip(hit, mouseX, mouseY) {
     return tintColor(v, v, v, chainColor);
   }
 
-  const pfSlice = col.slice(114, 134);
-  const gasSlice = col.slice(92, 112);
+  const pfSlice = col.slice(114, 134).reverse();
+  const gasSlice = col.slice(92, 112).reverse();
   const lenSlice = col.slice(70, 90);
   const fromSlice = col.slice(0, 20);
   const toSlice = col.slice(22, 42);
