@@ -758,12 +758,12 @@ function renderAddressPattern(addrSlice, w, h, chainColor) {
   c.style.width = w + 'px';
   c.style.height = h + 'px';
   const cx = c.getContext('2d');
-  const colW = w / addrSlice.length;
+  const rowH = h / addrSlice.length;
   for (let i = 0; i < addrSlice.length; i++) {
     const v = addrSlice[i];
     const [r, g, b] = tintColor(v, v, v, chainColor);
     cx.fillStyle = `rgb(${r},${g},${b})`;
-    cx.fillRect(Math.round(i * colW), 0, Math.ceil(colW), h);
+    cx.fillRect(0, Math.round(i * rowH), w, Math.ceil(rowH));
   }
   return c;
 }
@@ -846,10 +846,10 @@ function showTooltip(hit, mouseX, mouseY) {
   if (tx.maxFeePerGas) {
     feeSection.appendChild(ttItem(formatGwei(tx.maxFeePerGas), 'gwei', 'max fee'));
   }
-  upper.appendChild(feeSection);
-
-  // Priority fee bar
+  // Priority fee bar (far left)
   upper.appendChild(renderVerticalBar(pfSlice, BAR_W, BAR_H, gasColorFn));
+
+  upper.appendChild(feeSection);
 
   // Gas bar
   upper.appendChild(renderVerticalBar(gasSlice, BAR_W, BAR_H, gasColorFn));
@@ -890,7 +890,7 @@ function showTooltip(hit, mouseX, mouseY) {
 
   const fromRow = document.createElement('div');
   fromRow.className = 'tt-addr-row';
-  fromRow.appendChild(renderAddressPattern(fromSlice, 40, 14, chainColor));
+  fromRow.appendChild(renderAddressPattern(fromSlice, BAR_W, 20, chainColor));
   const fromAddr = document.createElement('span');
   fromAddr.className = 'tt-addr';
   fromAddr.textContent = tx.from;
@@ -903,7 +903,7 @@ function showTooltip(hit, mouseX, mouseY) {
 
   const toRow = document.createElement('div');
   toRow.className = 'tt-addr-row';
-  toRow.appendChild(renderAddressPattern(toSlice, 40, 14, chainColor));
+  toRow.appendChild(renderAddressPattern(toSlice, BAR_W, 20, chainColor));
   const toAddr = document.createElement('span');
   toAddr.className = 'tt-addr';
   toAddr.textContent = tx.to || '(contract creation)';
