@@ -76,6 +76,7 @@
     font-family: monospace;
     z-index: 10;
     pointer-events: none;
+    width: 440px;
     max-width: 90vw;
   }
   #tooltip a {
@@ -87,16 +88,21 @@
   .tt-upper {
     display: flex;
     align-items: stretch;
-    padding: 14px 16px;
-    gap: 14px;
+    padding: 14px 8px;
+    gap: 0;
   }
   .tt-section {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
-    gap: 6px;
-    min-width: 70px;
+    gap: 4px;
+    flex: 1;
+    width: 33.33%;
+    min-width: 0;
+  }
+  .tt-section + .tt-section {
+    border-left: 1px solid #1a1a1a;
   }
   .tt-bar {
     flex-shrink: 0;
@@ -105,8 +111,18 @@
   }
   .tt-item { text-align: center; }
   .tt-value {
-    font-size: 13px;
+    font-size: 16px;
     color: #ddd;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+  .tt-unit {
+    font-size: 10px;
+    color: #666;
+  }
+  .tt-value-sm {
+    font-size: 11px;
+    color: #888;
     white-space: nowrap;
     line-height: 1.2;
   }
@@ -116,9 +132,24 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     line-height: 1;
-    margin-top: 1px;
+  }
+  .tt-bar-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding-top: 6px;
   }
   .tt-spacer { flex: 1; }
+  .tt-block-row {
+    border-top: 1px solid #1a1a1a;
+    padding: 6px 16px;
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    font-size: 10px;
+    color: #555;
+  }
   .tt-bottom {
     border-top: 1px solid #1a1a1a;
     padding: 8px 16px;
@@ -773,12 +804,38 @@ function ttItem(value, unit, label) {
   item.className = 'tt-item';
   const valEl = document.createElement('div');
   valEl.className = 'tt-value';
+  if (unit) {
+    valEl.appendChild(document.createTextNode(value + ' '));
+    const unitEl = document.createElement('span');
+    unitEl.className = 'tt-unit';
+    unitEl.textContent = unit;
+    valEl.appendChild(unitEl);
+  } else {
+    valEl.textContent = value;
+  }
+  item.appendChild(valEl);
+  if (label) {
+    const lblEl = document.createElement('div');
+    lblEl.className = 'tt-label';
+    lblEl.textContent = label;
+    item.appendChild(lblEl);
+  }
+  return item;
+}
+
+function ttItemSm(value, unit, label) {
+  const item = document.createElement('div');
+  item.className = 'tt-item';
+  const valEl = document.createElement('div');
+  valEl.className = 'tt-value-sm';
   valEl.textContent = unit ? value + ' ' + unit : value;
   item.appendChild(valEl);
-  const lblEl = document.createElement('div');
-  lblEl.className = 'tt-label';
-  lblEl.textContent = label;
-  item.appendChild(lblEl);
+  if (label) {
+    const lblEl = document.createElement('div');
+    lblEl.className = 'tt-label';
+    lblEl.textContent = label;
+    item.appendChild(lblEl);
+  }
   return item;
 }
 
@@ -820,69 +877,90 @@ function showTooltip(hit, mouseX, mouseY) {
   const fromSlice = col.slice(0, 20);
   const toSlice = col.slice(22, 42);
 
-  const BAR_W = 10;
-  const BAR_H = 140;
+  const BAR_W_SM = 6;
+  const BAR_H_SM = 24;
 
   tooltipEl.replaceChildren();
 
-  // --- Upper section ---
+  // --- Upper section: 3 equal columns ---
   const upper = document.createElement('div');
   upper.className = 'tt-upper';
 
-  // Section 1: Fee numbers
+  // Section 1: Priority Fee / Tips
   const feeSection = document.createElement('div');
   feeSection.className = 'tt-section';
+  const tipGwei = effectivePriorityFee / 1e9;
+  feeSection.appendChild(ttItem(formatGweiNum(tipGwei), 'gwei', ''));
   if (tx.gasPrice) {
-    feeSection.appendChild(ttItem(formatGwei(tx.gasPrice), 'gwei', 'total gas'));
-  }
-  if (tx.maxPriorityFeePerGas) {
-    feeSection.appendChild(ttItem(formatGwei(tx.maxPriorityFeePerGas), 'gwei', 'tip'));
-  } else if (gasPriceWei && baseFeeWei) {
-    feeSection.appendChild(ttItem(formatGweiNum(effectivePriorityFee / 1e9), 'gwei', 'tip'));
+    feeSection.appendChild(ttItemSm(formatGwei(tx.gasPrice), 'gwei', 'total'));
   }
   if (blk && blk.baseFeePerGas) {
-    feeSection.appendChild(ttItem(formatGwei(blk.baseFeePerGas), 'gwei', 'base fee'));
+    feeSection.appendChild(ttItemSm(formatGwei(blk.baseFeePerGas), 'gwei', 'base'));
   }
   if (tx.maxFeePerGas) {
-    feeSection.appendChild(ttItem(formatGwei(tx.maxFeePerGas), 'gwei', 'max fee'));
+    feeSection.appendChild(ttItemSm(formatGwei(tx.maxFeePerGas), 'gwei', 'max'));
   }
-  // Priority fee bar (far left)
-  upper.appendChild(renderVerticalBar(pfSlice, BAR_W, BAR_H, gasColorFn));
-
+  const feeBarLabel = document.createElement('div');
+  feeBarLabel.className = 'tt-bar-label';
+  feeBarLabel.appendChild(renderVerticalBar(pfSlice, BAR_W_SM, BAR_H_SM, gasColorFn));
+  const feeLbl = document.createElement('span');
+  feeLbl.className = 'tt-label';
+  feeLbl.textContent = 'PRIORITY FEE';
+  feeBarLabel.appendChild(feeLbl);
+  feeSection.appendChild(feeBarLabel);
   upper.appendChild(feeSection);
 
-  // Gas bar
-  upper.appendChild(renderVerticalBar(gasSlice, BAR_W, BAR_H, gasColorFn));
+  // Section 2: Gas
+  const gasSection = document.createElement('div');
+  gasSection.className = 'tt-section';
+  const gasVal = parseInt(tx.gas, 16);
+  gasSection.appendChild(ttItem(gasVal.toLocaleString(), '', ''));
+  const gasBarLabel = document.createElement('div');
+  gasBarLabel.className = 'tt-bar-label';
+  gasBarLabel.appendChild(renderVerticalBar(gasSlice, BAR_W_SM, BAR_H_SM, gasColorFn));
+  const gasLbl = document.createElement('span');
+  gasLbl.className = 'tt-label';
+  gasLbl.textContent = 'GAS';
+  gasBarLabel.appendChild(gasLbl);
+  gasSection.appendChild(gasBarLabel);
+  upper.appendChild(gasSection);
 
-  // Section 3: Data (selector, bytes, value at bottom)
+  // Section 3: Data
   const dataSection = document.createElement('div');
   dataSection.className = 'tt-section';
+  dataSection.appendChild(ttItem(inputLen.toLocaleString(), 'bytes', ''));
   if (inputLen >= 4) {
-    dataSection.appendChild(ttItem(tx.input.slice(0, 10), '', 'selector'));
+    dataSection.appendChild(ttItemSm(tx.input.slice(0, 10), '', 'selector'));
   }
-  dataSection.appendChild(ttItem(inputLen.toLocaleString(), 'bytes', 'input'));
-  const spacer = document.createElement('div');
-  spacer.className = 'tt-spacer';
-  dataSection.appendChild(spacer);
-  dataSection.appendChild(ttItem(formatEth(tx.value), chain.currency, 'value'));
+  dataSection.appendChild(ttItemSm(formatEth(tx.value), chain.currency, 'value'));
+  const lenBarLabel = document.createElement('div');
+  lenBarLabel.className = 'tt-bar-label';
+  lenBarLabel.appendChild(renderVerticalBar(lenSlice, BAR_W_SM, BAR_H_SM, normalColorFn));
+  const lenLbl = document.createElement('span');
+  lenLbl.className = 'tt-label';
+  lenLbl.textContent = 'INPUT';
+  lenBarLabel.appendChild(lenLbl);
+  dataSection.appendChild(lenBarLabel);
   upper.appendChild(dataSection);
 
-  // Input length bar
-  upper.appendChild(renderVerticalBar(lenSlice, BAR_W, BAR_H, normalColorFn));
+  tooltipEl.appendChild(upper);
 
-  // Section 4: Block info
-  const blockSection = document.createElement('div');
-  blockSection.className = 'tt-section';
-  blockSection.appendChild(ttItem(hit.blockNum.toLocaleString(), '', 'block'));
+  // --- Block info row ---
+  const blockRow = document.createElement('div');
+  blockRow.className = 'tt-block-row';
+  const blockNumSpan = document.createElement('span');
+  blockNumSpan.textContent = '#' + hit.blockNum.toLocaleString();
+  blockRow.appendChild(blockNumSpan);
   if (blk) {
     const date = new Date(blk.timestamp * 1000);
-    blockSection.appendChild(ttItem(date.toTimeString().slice(0, 8), '', 'time'));
-    blockSection.appendChild(ttItem(
-      date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), '', 'date'));
+    const timeSpan = document.createElement('span');
+    timeSpan.textContent = date.toTimeString().slice(0, 8);
+    blockRow.appendChild(timeSpan);
+    const dateSpan = document.createElement('span');
+    dateSpan.textContent = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    blockRow.appendChild(dateSpan);
   }
-  upper.appendChild(blockSection);
-
-  tooltipEl.appendChild(upper);
+  tooltipEl.appendChild(blockRow);
 
   // --- Bottom section ---
   const bottom = document.createElement('div');
@@ -890,7 +968,7 @@ function showTooltip(hit, mouseX, mouseY) {
 
   const fromRow = document.createElement('div');
   fromRow.className = 'tt-addr-row';
-  fromRow.appendChild(renderAddressPattern(fromSlice, BAR_W, 20, chainColor));
+  fromRow.appendChild(renderAddressPattern(fromSlice, 10, 20, chainColor));
   const fromAddr = document.createElement('span');
   fromAddr.className = 'tt-addr';
   fromAddr.textContent = tx.from;
@@ -903,7 +981,7 @@ function showTooltip(hit, mouseX, mouseY) {
 
   const toRow = document.createElement('div');
   toRow.className = 'tt-addr-row';
-  toRow.appendChild(renderAddressPattern(toSlice, BAR_W, 20, chainColor));
+  toRow.appendChild(renderAddressPattern(toSlice, 10, 20, chainColor));
   const toAddr = document.createElement('span');
   toAddr.className = 'tt-addr';
   toAddr.textContent = tx.to || '(contract creation)';
