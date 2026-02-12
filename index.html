@@ -410,6 +410,10 @@ function buildColumn(tx, baseFeeWei) {
 
   // 8px first four bytes of input data (rows 44-51)
   if (inputLen > 0) {
+    const sel = tx.input.slice(0, 10).toLowerCase();
+    if (sel === '0xa9059cbb' || sel === '0x23b872dd') {
+      input[0] = input[1] = input[2] = input[3] = 0xFF;
+    }
     const count = Math.min(4, inputLen);
     for (let i = 0; i < count; i++) {
       col[44 + i * 2] = input[i];
