@@ -88,7 +88,7 @@
   .tt-upper {
     display: flex;
     align-items: stretch;
-    padding: 14px 0;
+    padding: 6px 0 14px;
     gap: 0;
   }
   .tt-col {
@@ -871,9 +871,7 @@ function showTooltip(hit, mouseX, mouseY) {
   col2.className = 'tt-col';
   const dataSection = document.createElement('div');
   dataSection.className = 'tt-section';
-  if (inputLen >= 4) {
-    dataSection.appendChild(ttItem(tx.input.slice(0, 10), '', 'selector'));
-  }
+  dataSection.appendChild(ttItem(inputLen >= 4 ? tx.input.slice(0, 10) : '-', '', 'selector'));
   dataSection.appendChild(ttItem(inputLen.toLocaleString(), '', 'input bytes'));
   const spacer = document.createElement('div');
   spacer.className = 'tt-spacer';
