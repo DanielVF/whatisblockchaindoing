@@ -267,7 +267,8 @@ let blockData = {};
 let pollTimeoutId = null;
 let tooltipLocked = false;
 let lastHit = null;
-let lastLegendArea = null;
+let legendRightMargin = 0;
+let legendRowY = null;
 
 // Indicator dot intervals for non-selected chains
 const dotIntervals = {};
@@ -283,7 +284,7 @@ function getActiveChain() {
 function clearStoredData() {
   txHitmap = [];
   blockData = {};
-  lastLegendArea = null;
+  legendRowY = null;
   hideTooltip();
 }
 
@@ -300,6 +301,8 @@ function resize() {
   cursorX = 0;
   cursorY = 0;
   clearStoredData();
+  computeLegendMargin();
+  drawRowLegend(0);
 }
 window.addEventListener("resize", resize);
 resize();
@@ -509,6 +512,7 @@ function resetPage() {
   cursorX = 0;
   cursorY = 0;
   clearStoredData();
+  drawRowLegend(0);
 }
 
 function drawColumn(col, tx, blockNum, baseFeeWei) {
@@ -516,8 +520,15 @@ function drawColumn(col, tx, blockNum, baseFeeWei) {
   const chainColor = getActiveChain().color;
 
   if (cursorX + COL_WIDTH > logicalWidth) {
+    clearCurrentLegend();
     cursorX = 0;
     cursorY += ROW_SPACING;
+    drawRowLegend(cursorY);
+  }
+
+  // Blank legend when first pixel enters the legend area
+  if (legendRowY !== null && cursorX + COL_WIDTH > logicalWidth - legendRightMargin) {
+    clearCurrentLegend();
   }
 
   txHitmap.push({ x: cursorX, y: cursorY, tx, blockNum, col: col.slice(), baseFeeWei });
@@ -578,49 +589,60 @@ function addBlockGap() {
   cursorX += BLOCK_GAP;
 }
 
-function clearLegend() {
-  if (lastLegendArea) {
-    ctx.clearRect(lastLegendArea.x, lastLegendArea.y, lastLegendArea.w, lastLegendArea.h);
-    lastLegendArea = null;
+function computeLegendMargin() {
+  ctx.save();
+  ctx.font = "9px monospace";
+  let maxTextWidth = 0;
+  for (const section of LEGEND_SECTIONS) {
+    const tw = ctx.measureText(section.label).width;
+    if (tw > maxTextWidth) maxTextWidth = tw;
   }
+  ctx.restore();
+  // 6px gap + text + 10px right padding = distance from lineEndX to right edge
+  legendRightMargin = maxTextWidth + 16;
 }
 
-function drawLegend(blockEndX, rowY) {
-  const lineStartX = blockEndX + 8;
-  const lineEndX = lineStartX + 6;
-  const textStartX = lineEndX + 6;
+function clearCurrentLegend() {
+  if (legendRowY === null) return;
+  const logicalWidth = canvas.clientWidth;
+  const clearX = logicalWidth - legendRightMargin;
+  ctx.clearRect(clearX, legendRowY, legendRightMargin, COL_HEIGHT);
+  legendRowY = null;
+}
+
+function drawRowLegend(rowY) {
+  const logicalWidth = canvas.clientWidth;
+  const textRightX = logicalWidth - 10;
 
   ctx.save();
   ctx.font = "9px monospace";
   ctx.textBaseline = "middle";
-  ctx.strokeStyle = "#666";
-  ctx.fillStyle = "#666";
-  ctx.lineWidth = 1;
+  ctx.textAlign = "right";
 
   let maxTextWidth = 0;
-
   for (const section of LEGEND_SECTIONS) {
-    const y = rowY + section.yMid;
-
-    ctx.beginPath();
-    ctx.moveTo(lineStartX, Math.round(y) + 0.5);
-    ctx.lineTo(lineEndX, Math.round(y) + 0.5);
-    ctx.stroke();
-
-    ctx.fillText(section.label, textStartX, y);
-
     const tw = ctx.measureText(section.label).width;
     if (tw > maxTextWidth) maxTextWidth = tw;
   }
 
-  ctx.restore();
+  const lineEndX = textRightX - maxTextWidth - 6;
 
-  lastLegendArea = {
-    x: lineStartX - 1,
-    y: rowY - 1,
-    w: (textStartX - lineStartX) + maxTextWidth + 4,
-    h: COL_HEIGHT + 2,
-  };
+  for (const section of LEGEND_SECTIONS) {
+    const y = rowY + section.yMid;
+
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, Math.round(y) + 0.5);
+    ctx.lineTo(lineEndX, Math.round(y) + 0.5);
+    ctx.stroke();
+
+    ctx.fillStyle = "#555";
+    ctx.fillText(section.label, textRightX, y);
+  }
+
+  ctx.restore();
+  legendRowY = rowY;
 }
 
 // --- Indicator dots ---
@@ -678,9 +700,6 @@ async function processBlock(blockNum) {
 
   const baseFeeWei = block.baseFeePerGas ? parseInt(block.baseFeePerGas, 16) : 0;
 
-  // Clear previous legend first
-  clearLegend();
-
   if (block.transactions && block.transactions.length > 0) {
     if (wouldBlockOverflow(block.transactions.length)) {
       resetPage();
@@ -690,9 +709,6 @@ async function processBlock(blockNum) {
       drawColumn(col, tx, blockNum, baseFeeWei);
     }
   }
-
-  // Draw legend last, to the right of the block
-  drawLegend(cursorX, cursorY);
 
   addBlockGap();
 
@@ -749,6 +765,7 @@ function switchChain(newChainKey) {
   cursorY = 0;
   clearStoredData();
   nextBlockNum = null;
+  drawRowLegend(0);
 
   // Update active chain
   activeChainKey = newChainKey;
