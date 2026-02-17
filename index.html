@@ -241,6 +241,14 @@ const BOUNDARY_ROWS = [20, 21, 42, 43, 52, 53, 68, 69, 90, 91, 112, 113];
 const BLOCK_GAP = 10;
 const FOUR_BYTE_START = 44;
 const FOUR_BYTE_END = 51;
+const LEGEND_SECTIONS = [
+  { label: "sender", yMid: 9.5 },
+  { label: "receiver", yMid: 31.5 },
+  { label: "selector", yMid: 47.5 },
+  { label: "input length", yMid: 79.5 },
+  { label: "gas", yMid: 101.5 },
+  { label: "priority", yMid: 118 },
+];
 
 // --- DOM refs ---
 
@@ -259,6 +267,7 @@ let blockData = {};
 let pollTimeoutId = null;
 let tooltipLocked = false;
 let lastHit = null;
+let lastLegendArea = null;
 
 // Indicator dot intervals for non-selected chains
 const dotIntervals = {};
@@ -274,6 +283,7 @@ function getActiveChain() {
 function clearStoredData() {
   txHitmap = [];
   blockData = {};
+  lastLegendArea = null;
   hideTooltip();
 }
 
@@ -568,6 +578,51 @@ function addBlockGap() {
   cursorX += BLOCK_GAP;
 }
 
+function clearLegend() {
+  if (lastLegendArea) {
+    ctx.clearRect(lastLegendArea.x, lastLegendArea.y, lastLegendArea.w, lastLegendArea.h);
+    lastLegendArea = null;
+  }
+}
+
+function drawLegend(blockEndX, rowY) {
+  const lineStartX = blockEndX + 8;
+  const lineEndX = lineStartX + 6;
+  const textStartX = lineEndX + 6;
+
+  ctx.save();
+  ctx.font = "9px monospace";
+  ctx.textBaseline = "middle";
+  ctx.strokeStyle = "#666";
+  ctx.fillStyle = "#666";
+  ctx.lineWidth = 1;
+
+  let maxTextWidth = 0;
+
+  for (const section of LEGEND_SECTIONS) {
+    const y = rowY + section.yMid;
+
+    ctx.beginPath();
+    ctx.moveTo(lineStartX, Math.round(y) + 0.5);
+    ctx.lineTo(lineEndX, Math.round(y) + 0.5);
+    ctx.stroke();
+
+    ctx.fillText(section.label, textStartX, y);
+
+    const tw = ctx.measureText(section.label).width;
+    if (tw > maxTextWidth) maxTextWidth = tw;
+  }
+
+  ctx.restore();
+
+  lastLegendArea = {
+    x: lineStartX - 1,
+    y: rowY - 1,
+    w: (textStartX - lineStartX) + maxTextWidth + 4,
+    h: COL_HEIGHT + 2,
+  };
+}
+
 // --- Indicator dots ---
 
 function flashDot(chainKey) {
@@ -623,6 +678,9 @@ async function processBlock(blockNum) {
 
   const baseFeeWei = block.baseFeePerGas ? parseInt(block.baseFeePerGas, 16) : 0;
 
+  // Clear previous legend first
+  clearLegend();
+
   if (block.transactions && block.transactions.length > 0) {
     if (wouldBlockOverflow(block.transactions.length)) {
       resetPage();
@@ -632,6 +690,9 @@ async function processBlock(blockNum) {
       drawColumn(col, tx, blockNum, baseFeeWei);
     }
   }
+
+  // Draw legend last, to the right of the block
+  drawLegend(cursorX, cursorY);
 
   addBlockGap();
 
