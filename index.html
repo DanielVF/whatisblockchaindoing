@@ -178,9 +178,9 @@
 <div id="header">
   <span class="site-name">WhatIsBlockchainDoing.com</span>
   <div class="chain-buttons">
-    <button class="chain-btn active" data-chain="monad"><span class="dot" id="dot-monad"></span>Monad</button>
-    <button class="chain-btn" data-chain="base"><span class="dot" id="dot-base"></span>Base</button>
-    <button class="chain-btn" data-chain="ethereum"><span class="dot" id="dot-ethereum"></span>Ethereum</button>
+    <button class="chain-btn active" data-chain="monad"><span class="dot" id="dot-monad"></span><span class="chain-label">Monad</span></button>
+    <button class="chain-btn" data-chain="base"><span class="dot" id="dot-base"></span><span class="chain-label">Base</span></button>
+    <button class="chain-btn" data-chain="ethereum"><span class="dot" id="dot-ethereum"></span><span class="chain-label">Ethereum</span></button>
   </div>
 </div>
 <canvas id="canvas"></canvas>
@@ -276,7 +276,20 @@ const dotIntervals = {};
 const dotFlashTimeouts = {};
 
 function getActiveChain() {
-  return CHAINS[activeChainKey];
+  const chain = CHAINS[activeChainKey];
+  const rpcOverride = localStorage.getItem("rpc_override_" + activeChainKey);
+  if (rpcOverride) return { ...chain, rpcUrl: rpcOverride, isRpcOverride: true };
+  return chain;
+}
+
+function updateChainButtonLabels() {
+  document.querySelectorAll(".chain-btn").forEach(btn => {
+    const key = btn.dataset.chain;
+    const chain = CHAINS[key];
+    const hasOverride = !!localStorage.getItem("rpc_override_" + key);
+    btn.querySelector(".chain-label").textContent =
+      chain.name + (hasOverride ? " override" : "");
+  });
 }
 
 // --- Clear / reset ---
@@ -1125,6 +1138,7 @@ if (!location.hash) {
   history.replaceState(null, "", "#" + activeChainKey);
 }
 
+updateChainButtonLabels();
 initDotIntervals();
 start();
 
